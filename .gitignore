@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+frontend/node_modules/
+frontend/dist/
+.env
+*.user
+*.suo
+.vscode/
+.idea/
