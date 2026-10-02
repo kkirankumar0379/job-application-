@@ -1,13 +1,9 @@
 **/bin/
 **/obj/
+**/uploads/
 frontend/node_modules/
 frontend/dist/
+extension/
+.git/
+*.log
 .env
-*.user
-*.suo
-.vscode/
-.idea/
-**/uploads/
-
-be.log
-fe.log

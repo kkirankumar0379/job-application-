@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 340px; margin: 0; padding: 14px; font: 13px/1.4 system-ui, sans-serif; color: #1a1a1a; }
+    h1 { font-size: 15px; margin: 0 0 10px; }
+    input { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    button.main { width: 100%; padding: 11px; border: 0; border-radius: 8px; background: #00c389; color: #002b1e; font-size: 14px; font-weight: 700; cursor: pointer; }
+    button.main:disabled { opacity: .6; cursor: wait; }
+    button.link { background: none; border: 0; color: #0a58ca; cursor: pointer; padding: 0; font-size: 12px; }
+    #out { margin-top: 12px; max-height: 280px; overflow: auto; }
+    .row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid #eee; }
+    .row span:last-child { color: #555; text-align: right; word-break: break-word; }
+    .err { color: #b00020; }
+    .muted { color: #777; font-size: 12px; }
+    .who { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    h2 { font-size: 12px; margin: 10px 0 2px; text-transform: uppercase; color: #777; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>JobAgent Autofill</h1>
+
+  <form id="loginView" hidden>
+    <input id="baseUrl" placeholder="JobAgent address (e.g. https://your-app.onrender.com)" />
+    <input id="email" type="email" placeholder="Email" autocomplete="email" required />
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password" required />
+    <button class="main" type="submit" id="loginBtn">Log in</button>
+  </form>
+
+  <div id="mainView" hidden>
+    <div class="who"><span class="muted" id="who"></span><button class="link" id="logout">Log out</button></div>
+    <button class="main" id="go">Autofill this page</button>
+    <p class="muted">Fills your details and uploads your resume. It never clicks Next or Submit, so review the page yourself.</p>
+  </div>
+
+  <div id="out"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

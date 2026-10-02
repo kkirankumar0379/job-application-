@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "JobAgent Autofill",
+  "version": "0.1.0",
+  "description": "Fills job application forms from your JobAgent profile and resume. Never submits.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost:5000/*", "<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "JobAgent Autofill" }
+}
