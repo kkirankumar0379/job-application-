@@ -167,7 +167,7 @@ export default function JobFeed({ profile, view, onApply, onError, onGoToProfile
 
       {view === 'all' && (
         <div className="source-tabs" role="tablist" aria-label="Job source">
-          {([['all', 'All jobs'], ['boards', 'Company career pages'], ['adzuna', 'Adzuna']] as const).map(([key, label]) => (
+          {([['all', 'All jobs'], ['boards', 'Company career pages'], ['adzuna', 'Job boards']] as const).map(([key, label]) => (
             <button key={key} role="tab" aria-selected={filters.source === key}
               className={`source-tab ${filters.source === key ? 'active' : ''}`} onClick={() => set('source', key)}>
               {label} <span className="count-pill">{feed?.counts?.[key] ?? '–'}</span>

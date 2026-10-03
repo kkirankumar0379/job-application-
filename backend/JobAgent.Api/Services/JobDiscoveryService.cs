@@ -99,7 +99,7 @@ public sealed partial class JobDiscoveryService(
         var run = new DiscoveryRun { CandidateProfileId = candidateProfileId };
         db.DiscoveryRuns.Add(run);
         var useAdzuna = boards.AdzunaConfigured;
-        var progress = Progress = new ScanProgress(companies.Count + (useAdzuna ? 1 : 0));
+        var progress = Progress = new ScanProgress(companies.Count + (useAdzuna ? 1 : 0) + JobBoardClient.FeedProviders.Length);
 
         var roles = Csv(prefs.RoleKeywordsCsv);
         var excludes = TitleExclusions(prefs);
@@ -148,13 +148,15 @@ public sealed partial class JobDiscoveryService(
         var found = Channel.CreateUnbounded<JobPosting>();
         async Task ProcessSourceAsync(CompanySource source, CancellationToken token)
         {
-            var isAdzuna = source.AtsProvider == JobBoardClient.AdzunaProvider;
+            var isAdzuna = JobBoardClient.IsAggregator(source.AtsProvider);
             try
             {
                 List<BoardJob> jobs;
                 try
                 {
-                    jobs = isAdzuna
+                    jobs = JobBoardClient.FeedProviders.Contains(source.AtsProvider)
+                        ? await boards.FetchFeedAsync(source.AtsProvider, token)
+                        : source.AtsProvider == JobBoardClient.AdzunaProvider
                         ? await boards.FetchAdzunaAsync(searchKeywords, (int)Math.Ceiling(prefs.MaxAgeHours / 24.0), token)
                         : await boards.FetchAsync(source.AtsProvider, source.BoardToken, source.Name, token, searchKeywords);
                 }
@@ -231,6 +233,8 @@ public sealed partial class JobDiscoveryService(
                 async (source, token) => await ProcessSourceAsync(source, token));
             if (useAdzuna)
                 await ProcessSourceAsync(new CompanySource { Id = Guid.Empty, Name = "Adzuna", AtsProvider = JobBoardClient.AdzunaProvider }, ct);
+            foreach (var feed in JobBoardClient.FeedProviders)
+                await ProcessSourceAsync(new CompanySource { Id = Guid.Empty, Name = feed, AtsProvider = feed }, ct);
         }, ct);
         _ = producer.ContinueWith(t => found.Writer.TryComplete(t.Exception), TaskScheduler.Default);
 

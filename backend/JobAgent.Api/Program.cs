@@ -85,9 +85,14 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
-    if (!db.CompanySources.Any())
+    // Add any seed boards that are missing, so new entries reach existing databases too.
+    var known = db.CompanySources.AsEnumerable().Select(c => (c.AtsProvider, c.BoardToken.ToLowerInvariant())).ToHashSet();
+    var knownNames = db.CompanySources.AsEnumerable().Select(c => c.Name.ToLowerInvariant()).ToHashSet();
+    var missing = CompanySeed.Boards.Where(b => !known.Contains((b.Provider, b.Token.ToLowerInvariant())) && !knownNames.Contains(b.Name.ToLowerInvariant()))
+        .DistinctBy(b => (b.Provider, b.Token.ToLowerInvariant())).ToList();
+    if (missing.Count > 0)
     {
-        db.CompanySources.AddRange(CompanySeed.Boards.Select(b => new CompanySource { Name = b.Name, AtsProvider = b.Provider, BoardToken = b.Token }));
+        db.CompanySources.AddRange(missing.Select(b => new CompanySource { Name = b.Name, AtsProvider = b.Provider, BoardToken = b.Token }));
         db.SaveChanges();
     }
 }
@@ -507,7 +512,7 @@ api.MapGet("/profiles/{id:guid}/feed", async (Guid id, int? hours, int? minScore
             x.Job.MatchedSkillsCsv, x.Job.MissingSkillsCsv, x.Job.MatchReason, x.OtherLocations,
         })
         .ToList();
-    var isAdzuna = (string provider) => provider == JobBoardClient.AdzunaProvider;
+    var isAdzuna = (string provider) => JobBoardClient.IsAggregator(provider);
     var counts = new { all = grouped.Count, adzuna = grouped.Count(j => isAdzuna(j.AtsProvider)), boards = grouped.Count(j => !isAdzuna(j.AtsProvider)) };
     var shown = source switch
     {
