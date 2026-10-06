@@ -1,6 +1,6 @@
 // Runs inside the application page (every frame). Fills what it can from window.__JOBAGENT_DATA__ and returns a report.
 // It never clicks Next/Submit and never touches passwords.
-(() => {
+(async () => {
   const D = window.__JOBAGENT_DATA__;
   if (!D) return null;
   const { profile: p, answers = [], resume } = D;
@@ -128,6 +128,40 @@
     const rule = RULES.find((r) => (r.match.test(key) || (r.type && el.type === r.type)) && !(r.not && r.not.test(key))
       && !(r.textOnly && el instanceof HTMLSelectElement));
     if (rule) fillWith(el, rule.id, rule.value, rule.alts);
+  }
+
+  // ---- custom dropdowns (Workday and similar: a button that opens a listbox instead of a real <select>) ----
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const PHONE_TYPE = { id: "Phone device type", alts: ["Mobile", "Cell", "Cellular", "Mobile Phone"], match: /phone device type|device type|phone type/ };
+  const CUSTOM_RULES = [RULES.find((r) => r.id === "Country"), RULES.find((r) => r.id === "State"), PHONE_TYPE];
+
+  async function chooseOption(button, wanted) {
+    const w = wanted.map(norm).filter(Boolean);
+    button.click();
+    for (let i = 0; i < 15; i++) {
+      await sleep(100);
+      const opts = [...document.querySelectorAll('[role="option"], [role="listbox"] li')].filter(usable);
+      if (!opts.length) continue;
+      const hit = opts.find((o) => w.includes(norm(o.innerText))) || opts.find((o) => w.some((x) => norm(o.innerText).startsWith(x)));
+      if (hit) { hit.click(); await sleep(150); return true; }
+      break;
+    }
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); // close the list, leave the field alone
+    return false;
+  }
+
+  const dropdowns = [...document.querySelectorAll('button[aria-haspopup="listbox"], [role="combobox"]:not(input)')].filter(usable);
+  for (const btn of dropdowns) {
+    const current = norm(btn.innerText || btn.value || "");
+    if (current && !/^(select one|select|choose|please select)/.test(current)) continue; // already has a value
+    const label = labelText(btn) || btn.getAttribute("aria-label") || "dropdown";
+    const key = keyOf(btn);
+    if (NEVER_GUESS.test(key)) { report.skipped.push({ field: label, reason: "sensitive question, left for you" }); continue; }
+    const rule = CUSTOM_RULES.find((r) => r && r.match.test(key) && !(r.not && r.not.test(key)));
+    if (!rule) continue;
+    const wanted = rule.alts || [rule.value];
+    if (wanted.every((x) => !x)) continue;
+    if (await chooseOption(btn, wanted)) report.filled.push({ field: rule.id, value: String(wanted[0]) });
   }
 
   // ---- radio groups with saved answers (e.g. "Are you legally authorized to work…?" → Yes) ----

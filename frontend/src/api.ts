@@ -20,9 +20,9 @@ export type DiscoveryRun = {
 
 export type ScanProgress = { companiesTotal: number; companiesDone: number; jobsSeen: number; jobsSaved: number };
 
-export type FeedSource = 'all' | 'boards' | 'adzuna';
+export type FeedSource = 'all' | 'boards' | 'universities' | 'adzuna';
 
-export type Feed = { jobs: FeedJob[]; counts: { all: number; boards: number; adzuna: number }; lastRun: DiscoveryRun | null; runningSince: string | null; progress: ScanProgress | null };
+export type Feed = { jobs: FeedJob[]; counts: { all: number; boards: number; universities: number; adzuna: number }; lastRun: DiscoveryRun | null; runningSince: string | null; progress: ScanProgress | null };
 
 export type FeedQuery = { hours: number; minScore: number; remote: boolean; mainStack: boolean; q: string; sort: 'match' | 'recent'; view: 'all' | 'saved'; source: FeedSource };
 

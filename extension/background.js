@@ -100,11 +100,58 @@ async function autofill(tabId, pageUrl) {
   }
   merged.resumeName = resume?.name ?? null;
   merged.resumeTailored = resume?.tailored ?? false;
+
+  // Answer memory: read every question on the page, fill the ones answered before, and show the review panel.
+  const company = (() => { try { return new URL(pageUrl).hostname.replace(/^www./, ''); } catch { return ''; } })();
+  await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: (data) => { window.__JOBAGENT_MEM__ = data; },
+    args: [{ pageUrl, company }],
+  });
+  const memory = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    files: ['answer-memory/reader.js', 'answer-memory/applier.js', 'answer-memory/panel.js', 'answer-memory/controller.js'],
+  }).catch(() => []);
+  merged.memory = { questions: 0, auto: 0, confirm: 0, ask: 0, conflict: 0 };
+  for (const { result } of memory) for (const k of Object.keys(merged.memory)) merged.memory[k] += result?.[k] || 0;
   return merged;
 }
 
+// ---- answer memory API calls (made here so the page never sees your login token) ----
+let cachedProfileId = null;
+async function memoryCall(path, method, body) {
+  const { base, token } = await getSettings();
+  if (!token) throw new Error('Please log in first.');
+  if (!cachedProfileId) cachedProfileId = (await getJson(base + '/api/profiles', token))[0]?.id;
+  if (!cachedProfileId) throw new Error('No profile found.');
+  const res = await fetch(base + '/api/profiles/' + cachedProfileId + path, {
+    method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) { await chrome.storage.local.remove('token'); throw new Error('Please log in again.'); }
+  if (!res.ok) throw new Error(path + ' -> ' + res.status);
+  return res.status === 204 ? null : res.json();
+}
+
+async function memoryMessage(msg) {
+  const page = { pageUrl: msg.pageUrl, company: msg.company };
+  switch (msg.type) {
+    case 'memory-resolve': return memoryCall('/answer-memory/resolve', 'POST', { ...page, questions: msg.questions });
+    case 'memory-save': return memoryCall('/answer-memory', 'POST', { question: msg.question, answer: msg.answer, type: msg.answerType, options: msg.options, sourceUrl: msg.pageUrl, company: msg.company });
+    case 'memory-used': return memoryCall('/answer-memory/used', 'POST', msg.ids);
+    case 'memory-validate': return memoryCall('/answer-memory/validate', 'POST', { ...page, items: msg.items });
+    case 'memory-prefer': {
+      const { base, token } = await getSettings();
+      const res = await fetch(base + '/api/answer-memory/' + msg.id + '/prefer', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+      if (!res.ok) throw new Error('prefer -> ' + res.status);
+      return null;
+    }
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  const task = msg.type === 'status' ? status()
+  const task = msg.type?.startsWith('memory-') ? memoryMessage(msg)
+    : msg.type === 'status' ? status()
     : msg.type === 'login' ? login(msg)
     : msg.type === 'logout' ? logout()
     : msg.type === 'autofill' ? autofill(msg.tabId, msg.url || '')
@@ -112,4 +159,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!task) return false;
   task.then((data) => sendResponse({ ok: true, data }), (e) => sendResponse({ ok: false, error: String(e.message || e) }));
   return true; // async response
+});
+
+// Keyboard shortcut (Alt+Shift+F): same as pressing Autofill in the popup; the result shows as a badge on the icon.
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== 'autofill-page') return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  try {
+    const data = await autofill(tab.id, tab.url || '');
+    await chrome.action.setBadgeBackgroundColor({ color: '#00a572' });
+    await chrome.action.setBadgeText({ tabId: tab.id, text: String(data.filled.length) });
+  } catch (e) {
+    await chrome.action.setBadgeBackgroundColor({ color: '#c0392b' });
+    await chrome.action.setBadgeText({ tabId: tab.id, text: '!' });
+  }
+  setTimeout(() => chrome.action.setBadgeText({ tabId: tab.id, text: '' }), 5000);
 });

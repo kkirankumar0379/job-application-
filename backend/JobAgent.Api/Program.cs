@@ -7,6 +7,7 @@ using JobAgent.Api.Contracts;
 using JobAgent.Api.Data;
 using JobAgent.Api.Domain;
 using JobAgent.Api.Services;
+using JobAgent.Api.Services.Answers;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -58,11 +59,12 @@ builder.Services.AddSingleton<IJobAnalysisService, JobAnalysisService>();
 builder.Services.AddSingleton<IAutomationService, AutomationService>();
 builder.Services.AddHttpClient<JobBoardClient>(c =>
 {
-    c.Timeout = TimeSpan.FromSeconds(30);
+    c.Timeout = TimeSpan.FromSeconds(20);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("JobAgent/0.1 (personal job search)");
 });
 builder.Services.AddScoped<IJobDiscoveryService, JobDiscoveryService>();
 builder.Services.AddScoped<CompanyImporter>();
+builder.Services.AddScoped<AnswerMemoryService>();
 builder.Services.AddSingleton<AiSettings>();
 builder.Services.AddSingleton<AdzunaSettings>();
 builder.Services.AddScoped<ResumeTailor>();
@@ -88,13 +90,13 @@ using (var scope = app.Services.CreateScope())
     // Add any seed boards that are missing, so new entries reach existing databases too.
     var known = db.CompanySources.AsEnumerable().Select(c => (c.AtsProvider, c.BoardToken.ToLowerInvariant())).ToHashSet();
     var knownNames = db.CompanySources.AsEnumerable().Select(c => c.Name.ToLowerInvariant()).ToHashSet();
-    var missing = CompanySeed.Boards.Where(b => !known.Contains((b.Provider, b.Token.ToLowerInvariant())) && !knownNames.Contains(b.Name.ToLowerInvariant()))
+    var missing = CompanySeed.Boards.Concat(CompanySeedMore.Boards).Where(b => !known.Contains((b.Provider, b.Token.ToLowerInvariant())) && !knownNames.Contains(b.Name.ToLowerInvariant()))
         .DistinctBy(b => (b.Provider, b.Token.ToLowerInvariant())).ToList();
-    if (missing.Count > 0)
-    {
-        db.CompanySources.AddRange(missing.Select(b => new CompanySource { Name = b.Name, AtsProvider = b.Provider, BoardToken = b.Token }));
-        db.SaveChanges();
-    }
+    // A university can have several career sites under one name, so these are matched by board only.
+    var missingUniversities = UniversitySeed.Boards.Where(b => !known.Contains(("Workday", b.Token.ToLowerInvariant()))).ToList();
+    db.CompanySources.AddRange(missing.Select(b => new CompanySource { Name = b.Name, AtsProvider = b.Provider, BoardToken = b.Token }));
+    db.CompanySources.AddRange(missingUniversities.Select(b => new CompanySource { Name = b.Name, AtsProvider = "Workday", BoardToken = b.Token }));
+    if (missing.Count > 0 || missingUniversities.Count > 0) db.SaveChanges();
 }
 
 var uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "uploads");
@@ -314,6 +316,41 @@ api.MapDelete("/answers/{id:guid}", async (Guid id, ClaimsPrincipal me, AppDbCon
     return await db.SavedAnswers.Where(x => x.Id == id && mine.Contains(x.CandidateProfileId)).ExecuteDeleteAsync() > 0 ? Results.NoContent() : Results.NotFound();
 });
 
+// Answer memory: questions answered on earlier applications, reused when the same (or a similar) question appears
+api.MapGet("/profiles/{id:guid}/answer-memory", async (Guid id, ClaimsPrincipal me, AppDbContext db) =>
+    await db.OwnsProfile(me, id)
+        ? Results.Ok(await db.AnswerMemories.Where(x => x.CandidateProfileId == id).OrderByDescending(x => x.UpdatedAt).ToListAsync())
+        : Results.NotFound());
+
+api.MapPost("/profiles/{id:guid}/answer-memory/resolve", async (Guid id, ResolveRequest req, ClaimsPrincipal me, AppDbContext db, AnswerMemoryService memory, CancellationToken ct) =>
+    await db.OwnsProfile(me, id) ? Results.Ok(await memory.ResolveAsync(id, req, ct)) : Results.NotFound());
+
+api.MapPost("/profiles/{id:guid}/answer-memory", async (Guid id, SaveRequest req, ClaimsPrincipal me, AppDbContext db, AnswerMemoryService memory, CancellationToken ct) =>
+    await db.OwnsProfile(me, id) ? Results.Ok(await memory.SaveAsync(id, req, ct)) : Results.NotFound());
+
+api.MapPost("/profiles/{id:guid}/answer-memory/used", async (Guid id, List<Guid> ids, ClaimsPrincipal me, AppDbContext db, AnswerMemoryService memory, CancellationToken ct) =>
+{
+    if (!await db.OwnsProfile(me, id)) return Results.NotFound();
+    await memory.RecordUseAsync(id, ids, ct);
+    return Results.NoContent();
+});
+
+api.MapPost("/profiles/{id:guid}/answer-memory/validate", async (Guid id, ValidateRequest req, ClaimsPrincipal me, AppDbContext db, AnswerMemoryService memory, CancellationToken ct) =>
+    await db.OwnsProfile(me, id) ? Results.Ok(await memory.ValidateAsync(id, req, ct)) : Results.NotFound());
+
+api.MapPost("/answer-memory/{id:guid}/prefer", async (Guid id, ClaimsPrincipal me, AppDbContext db, AnswerMemoryService memory, CancellationToken ct) =>
+{
+    var mine = db.OwnedProfileIds(me);
+    var profileId = await db.AnswerMemories.Where(x => x.Id == id && mine.Contains(x.CandidateProfileId)).Select(x => (Guid?)x.CandidateProfileId).FirstOrDefaultAsync(ct);
+    return profileId is { } pid && await memory.PreferAsync(pid, id, ct) ? Results.NoContent() : Results.NotFound();
+});
+
+api.MapDelete("/answer-memory/{id:guid}", async (Guid id, ClaimsPrincipal me, AppDbContext db) =>
+{
+    var mine = db.OwnedProfileIds(me);
+    return await db.AnswerMemories.Where(x => x.Id == id && mine.Contains(x.CandidateProfileId)).ExecuteDeleteAsync() > 0 ? Results.NoContent() : Results.NotFound();
+});
+
 // Jobs
 api.MapGet("/jobs", async (ClaimsPrincipal me, AppDbContext db) =>
 {
@@ -513,11 +550,20 @@ api.MapGet("/profiles/{id:guid}/feed", async (Guid id, int? hours, int? minScore
         })
         .ToList();
     var isAdzuna = (string provider) => JobBoardClient.IsAggregator(provider);
-    var counts = new { all = grouped.Count, adzuna = grouped.Count(j => isAdzuna(j.AtsProvider)), boards = grouped.Count(j => !isAdzuna(j.AtsProvider)) };
+    // University career pages get their own tab and are not counted under "Company career pages".
+    var isUniversity = (string company) => UniversitySeed.IsUniversity(company);
+    var counts = new
+    {
+        all = grouped.Count,
+        adzuna = grouped.Count(j => isAdzuna(j.AtsProvider)),
+        universities = grouped.Count(j => !isAdzuna(j.AtsProvider) && isUniversity(j.Company)),
+        boards = grouped.Count(j => !isAdzuna(j.AtsProvider) && !isUniversity(j.Company)),
+    };
     var shown = source switch
     {
         "adzuna" => grouped.Where(j => isAdzuna(j.AtsProvider)),
-        "boards" => grouped.Where(j => !isAdzuna(j.AtsProvider)),
+        "universities" => grouped.Where(j => !isAdzuna(j.AtsProvider) && isUniversity(j.Company)),
+        "boards" => grouped.Where(j => !isAdzuna(j.AtsProvider) && !isUniversity(j.Company)),
         _ => grouped.AsEnumerable()
     };
     var lastRun = await db.DiscoveryRuns.Where(x => x.CandidateProfileId == id && x.FinishedAt != null).OrderByDescending(x => x.StartedAt).FirstOrDefaultAsync();

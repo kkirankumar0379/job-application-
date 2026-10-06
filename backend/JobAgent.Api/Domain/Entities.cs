@@ -164,3 +164,35 @@ public sealed class JobApplication
     public DateTimeOffset? SubmittedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// One question the user answered on an application, kept so the same (or a differently worded) question can be answered
+/// from memory next time. See Services/AnswerMemory.
+/// </summary>
+public sealed class AnswerMemory
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid CandidateProfileId { get; set; }
+    public string OriginalQuestion { get; set; } = "";
+    public string NormalizedQuestion { get; set; } = "";
+    // What the question is really asking (e.g. "sponsorship", "years_experience"); empty when no known intent applies.
+    public string Intent { get; set; } = "";
+    // For per-skill questions ("years of C#"): the skills asked about, sorted, comma separated.
+    public string Subject { get; set; } = "";
+    // True when "yes" means the opposite of the usual reading ("Can you work without sponsorship?").
+    public bool Inverted { get; set; }
+    public string Answer { get; set; } = "";
+    public string AnswerType { get; set; } = "text"; // text | textarea | choice | yesno | number | multi
+    public string OptionsJson { get; set; } = "[]";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset LastUsedAt { get; set; } = DateTimeOffset.UtcNow;
+    public int TimesUsed { get; set; }
+    // Where it was first answered.
+    public string SourceCompany { get; set; } = "";
+    public string SourceUrl { get; set; } = "";
+    // Preferred = the answer the user approved last; Superseded = replaced by a newer approved answer (kept for history).
+    public string Status { get; set; } = "Preferred"; // Preferred | Superseded
+    // Reliability: UserAnswered (typed or confirmed by the user).
+    public string Reliability { get; set; } = "UserAnswered";
+}

@@ -149,19 +149,25 @@ public sealed partial class JobDiscoveryService(
         async Task ProcessSourceAsync(CompanySource source, CancellationToken token)
         {
             var isAdzuna = JobBoardClient.IsAggregator(source.AtsProvider);
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            // One slow site must not hold up the whole scan: reading its jobs and their pages gets 60 seconds in total.
+            using var sourceCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            sourceCts.CancelAfter(TimeSpan.FromSeconds(60));
+            var fetchToken = sourceCts.Token;
             try
             {
                 List<BoardJob> jobs;
                 try
                 {
                     jobs = JobBoardClient.FeedProviders.Contains(source.AtsProvider)
-                        ? await boards.FetchFeedAsync(source.AtsProvider, token)
+                        ? await boards.FetchFeedAsync(source.AtsProvider, fetchToken)
                         : source.AtsProvider == JobBoardClient.AdzunaProvider
-                        ? await boards.FetchAdzunaAsync(searchKeywords, (int)Math.Ceiling(prefs.MaxAgeHours / 24.0), token)
-                        : await boards.FetchAsync(source.AtsProvider, source.BoardToken, source.Name, token, searchKeywords);
+                        ? await boards.FetchAdzunaAsync(searchKeywords, (int)Math.Ceiling(prefs.MaxAgeHours / 24.0), fetchToken)
+                        : await boards.FetchAsync(source.AtsProvider, source.BoardToken, source.Name, fetchToken, searchKeywords);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
                 {
+                    if (ex is OperationCanceledException) ex = new TimeoutException("Timed out after 60 seconds.");
                     sourceResults[source.Id] = (null, ex.Message, null);
                     logger.LogInformation("Scan failed for {Provider}/{Token}: {Error}", source.AtsProvider, source.BoardToken, ex.Message);
                     return;
@@ -186,7 +192,7 @@ public sealed partial class JobDiscoveryService(
                 var candidates = stream.ToList();
                 Interlocked.Add(ref candidatesTotal, candidates.Count);
 
-                await Parallel.ForEachAsync(candidates, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = token }, async (job, innerToken) =>
+                await Parallel.ForEachAsync(candidates, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = fetchToken }, async (job, innerToken) =>
                 {
                     if (job.NeedsDetail)
                     {
@@ -223,18 +229,31 @@ public sealed partial class JobDiscoveryService(
                     found.Writer.TryWrite(posting);
                 });
             }
-            finally { Interlocked.Increment(ref progress.CompaniesDone); }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                // Ran out of time while reading job pages; the jobs read so far are kept.
+                logger.LogInformation("Scan of {Provider}/{Token} hit the 60 second limit while reading job pages", source.AtsProvider, source.BoardToken);
+            }
+            finally
+            {
+                if (timer.Elapsed > TimeSpan.FromSeconds(15))
+                    logger.LogInformation("Slow source {Name} ({Provider}) took {Seconds:0}s", source.Name, source.AtsProvider, timer.Elapsed.TotalSeconds);
+                Interlocked.Increment(ref progress.CompaniesDone);
+            }
         }
 
         // Company boards first; the aggregator runs afterwards so jobs found on a company's own site win.
         var producer = Task.Run(async () =>
         {
-            await Parallel.ForEachAsync(companies, new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            // The job-search APIs run alongside the company boards instead of after them (they used to be the slow tail).
+            // Duplicates of a company's own jobs are merged when the feed loads.
+            var aggregators = new List<CompanySource>();
+            if (useAdzuna) aggregators.Add(new CompanySource { Id = Guid.Empty, Name = "Adzuna", AtsProvider = JobBoardClient.AdzunaProvider });
+            aggregators.AddRange(JobBoardClient.FeedProviders.Select(feed => new CompanySource { Id = Guid.Empty, Name = feed, AtsProvider = feed }));
+            var aggregatorTask = Task.WhenAll(aggregators.Select(a => ProcessSourceAsync(a, ct)));
+            await Parallel.ForEachAsync(companies, new ParallelOptions { MaxDegreeOfParallelism = 80, CancellationToken = ct },
                 async (source, token) => await ProcessSourceAsync(source, token));
-            if (useAdzuna)
-                await ProcessSourceAsync(new CompanySource { Id = Guid.Empty, Name = "Adzuna", AtsProvider = JobBoardClient.AdzunaProvider }, ct);
-            foreach (var feed in JobBoardClient.FeedProviders)
-                await ProcessSourceAsync(new CompanySource { Id = Guid.Empty, Name = feed, AtsProvider = feed }, ct);
+            await aggregatorTask;
         }, ct);
         _ = producer.ContinueWith(t => found.Writer.TryComplete(t.Exception), TaskScheduler.Default);
 
@@ -391,11 +410,11 @@ public sealed partial class JobDiscoveryService(
     private static partial Regex NoSponsorship();
 
     // Federal-government / public-sector roles, recognizable from the title.
-    [GeneratedRegex(@"(federal|government|gov|public sector|clearance|cleared|ts/sci|dod|defense|intelligence community)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(federal|government|gov\b|public sector|clearance|cleared|ts/sci|dod|defense|intelligence community)\b", RegexOptions.IgnoreCase)]
     public static partial Regex FederalTitle();
 
     // Descriptions that require (or say you must be able to get) a security clearance or public-trust suitability.
-    [GeneratedRegex(@"security clearance|ts/sci|top secret|secret clearance|public trust|active clearance|clearance (is )?required|(obtain|maintain|eligible for|hold) (an? |a current |an active )?(u.?s.? )?(government |security )?clearance|federal (agency|agencies|government customer|clients?)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"security clearance|\bts/sci\b|top secret|\bsecret clearance|public trust|active clearance|clearance (is )?required|(obtain|maintain|eligible for|hold) (an? |a current |an active )?(u.?s.? )?(government |security )?clearance|federal (agency|agencies|government customer|clients?)", RegexOptions.IgnoreCase)]
     public static partial Regex ClearanceRequired();
 }
 

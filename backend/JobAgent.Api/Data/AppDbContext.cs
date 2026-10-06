@@ -14,6 +14,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<CompanySource> CompanySources => Set<CompanySource>();
     public DbSet<DiscoveryRun> DiscoveryRuns => Set<DiscoveryRun>();
     public DbSet<TailoredResume> TailoredResumes => Set<TailoredResume>();
+    public DbSet<AnswerMemory> AnswerMemories => Set<AnswerMemory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +25,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<JobPosting>().HasIndex(x => new { x.CandidateProfileId, x.CreatedAt });
         modelBuilder.Entity<SearchPreferences>().HasIndex(x => x.CandidateProfileId).IsUnique();
         modelBuilder.Entity<CompanySource>().HasIndex(x => new { x.AtsProvider, x.BoardToken }).IsUnique();
+        modelBuilder.Entity<AnswerMemory>().HasIndex(x => new { x.CandidateProfileId, x.Intent, x.Subject });
+        modelBuilder.Entity<AnswerMemory>().HasIndex(x => new { x.CandidateProfileId, x.NormalizedQuestion });
         modelBuilder.Entity<TailoredResume>().HasIndex(x => new { x.CandidateProfileId, x.JobPostingId });
     }
 }

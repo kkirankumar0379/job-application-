@@ -141,7 +141,6 @@ public static class CompanySeed
         ("SmartRecruiters", "Canva", "Canva"),
         ("Greenhouse", "justworks", "Justworks"),
         ("Greenhouse", "attentive", "Attentive"),
-        ("Greenhouse", "hightouch", "Hightouch"),
         ("Greenhouse", "iterable", "Iterable"),
         ("Greenhouse", "sendbird", "Sendbird"),
         ("Greenhouse", "intercom", "Intercom"),
@@ -161,7 +160,6 @@ public static class CompanySeed
         ("Greenhouse", "wrike", "Wrike"),
         ("Greenhouse", "salesloft", "Salesloft"),
         ("Greenhouse", "6sense", "6sense"),
-        ("Greenhouse", "bombora", "Bombora"),
         ("Greenhouse", "adyen", "Adyen"),
         ("Greenhouse", "galileo", "Galileo"),
         ("Greenhouse", "lithic", "Lithic"),
@@ -339,5 +337,7 @@ public static class CompanySeed
         ("Ashby", "whoop", "Whoop"),
         ("Greenhouse", "wise", "Wise"),
         ("Ashby", "wistia", "Wistia"),
+        ("Akkodis", "us", "Akkodis"),
+        ("Randstad", "internal", "Randstad USA"),
     ];
 }

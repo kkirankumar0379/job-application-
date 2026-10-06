@@ -52,6 +52,14 @@ $('go').onclick = async () => {
   else if (resumeName) html += `<div class="muted">No resume upload box found on this page yet. If it appears on the next step, run Autofill again.</div>`;
   if (filled.length) html += '<h2>Filled</h2>' + filled.map((f) => `<div class="row"><span>${esc(f.field)}</span><span>${esc(f.value)}</span></div>`).join('');
   if (skipped.length) html += '<h2>Left for you</h2>' + skipped.map((f) => `<div class="row"><span>${esc(f.field)}</span><span>${esc(f.reason)}</span></div>`).join('');
+  const m = res.data.memory;
+  if (m && m.questions) {
+    html += '<h2>Answer memory</h2>' + '<div class="row"><span>Filled from memory</span><span>' + m.auto + '</span></div>'
+      + '<div class="row"><span>Need your confirmation</span><span>' + m.confirm + '</span></div>'
+      + '<div class="row"><span>New questions</span><span>' + m.ask + '</span></div>'
+      + (m.conflict ? '<div class="row"><span>Conflicting answers</span><span>' + m.conflict + '</span></div>' : '')
+      + '<div class="muted">Review them in the panel on the page (top right).</div>';
+  }
   if (!filled.length && !resume) html += '<p class="muted">Nothing to fill here. Open the application form (past any Sign In step) and try again.</p>';
   out.innerHTML = html;
 };

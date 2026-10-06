@@ -26,6 +26,9 @@ public sealed partial class JobBoardClient(HttpClient http, AdzunaSettings adzun
         var host = uri.Host.ToLowerInvariant();
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var first = segments.FirstOrDefault();
+        // Akkodis (US) careers pages: www.akkodis.com/en-us/careers/job-results?...
+        if (host.EndsWith("akkodis.com") && uri.AbsolutePath.Contains("/careers/job-results", StringComparison.OrdinalIgnoreCase)) return (AkkodisProvider, "us");
+        if (host.EndsWith("randstadusa.com") && uri.AbsolutePath.StartsWith("/jobs/internal", StringComparison.OrdinalIgnoreCase)) return (RandstadProvider, "internal");
         if (host.EndsWith("greenhouse.io"))
         {
             // boards.greenhouse.io/embed/job_board?for=token
@@ -55,6 +58,8 @@ public sealed partial class JobBoardClient(HttpClient http, AdzunaSettings adzun
         "Workday" => $"https://{token}",
         "Website" => token,
         "Phenom" => "https://" + token.Split('#')[0],
+        AkkodisProvider => AkkodisCareersUrl,
+        RandstadProvider => RandstadCareersUrl,
         _ => ""
     };
 
@@ -115,6 +120,8 @@ public sealed partial class JobBoardClient(HttpClient http, AdzunaSettings adzun
         "Workday" => await FetchWorkdayAsync(token, companyName, ct),
         "Website" => await FetchWebsiteAsync(token, companyName, ct),
         "Phenom" => await FetchPhenomAsync(token, companyName, keywords, ct),
+        AkkodisProvider => await FetchAkkodisAsync(companyName, ct),
+        RandstadProvider => await FetchRandstadAsync(companyName, ct),
         _ => throw new NotSupportedException($"Unsupported job board '{provider}'.")
     };
 
@@ -130,6 +137,7 @@ public sealed partial class JobBoardClient(HttpClient http, AdzunaSettings adzun
             return new BoardJobDetail(text.Trim(), null, null);
         }
         if (provider == "Website") return await FetchWebsiteDetailAsync(externalId, ct);
+        if (provider == AkkodisProvider) return await FetchAkkodisDetailAsync(externalId, ct);
         // Phenom listings have exact dates, locations and clean titles; the job page only adds the full description.
         if (provider == "Phenom") return (await FetchWebsiteDetailAsync(externalId, ct)) with { PostedAt = null, Location = null, Title = null };
         if (provider == "Workday")
